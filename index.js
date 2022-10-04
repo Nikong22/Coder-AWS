@@ -1,386 +1,210 @@
+const express = require("express");
 const util = require('util');
-const {normalize, schema} = require('normalizr');
-const express = require('express');
-const handlebars = require('express-handlebars');
+const routes = require("./routes/productos")
+const rutas = require('./router');
+const { engine } = require('express-handlebars');
 const mongoose = require('mongoose');
-const generador = require('./generador/productos');
+const { normalize, schema } = require('normalizr');
+const MensajeDB = require('./models/mensajes')
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const advancedOptions = {useNewUrlParser: true, useUnifiedTopology: true};
+const advancedOptions = { useNewUrlParser: true, useUnifiedTopology: true };
+const routes_controller = require('./routes/controllers/productos.controller');
+const {obtenerUsuario, obtenerUsuarioId, passwordValida} = require('./utils/util');
+const bCrypt = require('bcryptjs');
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
-const routes = require('./routes'); 
-const {obtenerUsuario, obtenerUsuarioId, passwordValida} = require('./utils/util');
-const bCrypt = require('bCrypt');
-const FacebookStrategy = require('passport-facebook').Strategy;
+const router = require('./router'); 
+const User = require('./models/users')
+require('dotenv').config({ path: __dirname + '/.env' })
 const {fork} = require('child_process');
 const cluster = require('cluster');
-const winston = require('winston')
+const fs = require('fs'); 
+const logger = require('./logger');
+var fileupload = require("express-fileupload");
 const compression = require('compression')
 
-
-//Para convertir en HTTPS
-//const https = require('https');
-const fs = require('fs'); 
-const httpsOptions = {
-    key: fs.readFileSync('./sslcert/cert.key'),
-    cert: fs.readFileSync('./sslcert/cert.pem')
-}
-
-
 const app = express();
-let PORT = 8080;
-const router = express.Router();
-const http = require('http').Server(app);
+const PORT = process.env.PORT;
+const http = require("http").Server(app);
 const io = require('socket.io')(http);
-const usuarios = [];
+
+app.use(fileupload());
 let FORK_O_CLUSTER = 'FORK'
 
-const variablesFacebook = {
-  clientID: '4623989377730633',
-  clientSecret: '093f6bb8b562debced4c4de04697dd42'
+const numCPUs = require('os').cpus().length
+if(FORK_O_CLUSTER == 'FORK'){
+  app.listen(PORT, () => logger.info(`Servidor HTTP escuando en el puerto ${PORT}`));
+}else{
+  if(cluster.isMaster){
+    console.log(`master ${process.pid} running`)
+    for(let i = 0; i < numCPUs; i++){
+      cluster.fork()
+    }
+  
+    cluster.on('exit', (worker, code, signal) => {
+      console.log(`worker ${worker.process.pid} died`)
+    })
+  }else{
+    console.log(`worker ${process.pid} started`)
+    app.listen(PORT, () => logger.info(`Servidor HTTP escuando en el puerto ${PORT}`));
+  }
 }
-
-
+app.use(express.static("public"));
 app.use(express.json());
-app.use(express.urlencoded({extended: true}));
-app.use(compression())
-app.use('/api', router);
+app.use(express.urlencoded({ extended: true }));
+app.use("/api", routes)
 const cookieParser = require('cookie-parser');
 app.use(cookieParser("clave-secreta"));
+app.use(compression())
 
 app.use(session({
-  store: MongoStore.create({
-      mongoUrl: 'mongodb+srv://nikong:nikong22!@cluster0.z6il9.mongodb.net/myFirstDatabase?retryWrites=true&w=majority',
-      mongoOptions: advancedOptions
-  }),
   secret: 'secreto',
   resave: false,
   saveUninitialized: false,
-   cookie: { maxAge: 10000 }
+  // cookie: { maxAge: 5000 }
 }));
-
+app.set('views', './views'); // especifica el directorio de vistas
+app.set('view engine', 'hbs'); // registra el motor de plantillas
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.engine(
+  "hbs",
+  engine({
+    extname: ".hbs",
+    defaultLayout: "index.hbs",
+    layoutsDir: __dirname + "/views/layouts",
+    partialsDir: __dirname + "/views/partials"
+  })
+);
+
 app.use('/', (req, res, next) => {
-  if (req.isAuthenticated()) {
-    const username = req.user.name ? req.user.name : req.user.username
-    const avatar = req.user.avatar
-    res.cookie('username', username,  { signed: false, maxAge: 5000 } );
-    res.cookie('avatar', avatar,  { signed: false, maxAge: 5000 } );
+  if (req.cookies.username) {
+    const username = req.cookies.username
+    res.cookie('username', username, { signed: false, maxAge: 5000 });
   }
   express.static('public')(req, res, next);
 });
 
-const productos = [
-
-];
-
-const mensajes = [
-
-];
-
-const chat = {
-  id: 123,
-  mensajes: mensajes
-};
-
 function print(objeto) {
-  logger.info(util.inspect(objeto,false,12,true))
+  console.log(util.inspect(objeto, false, 12, true))
 }
 
-const URI = 'mongodb://localhost:27017/comercio';
+io.on('connection', async (socket) => {
+  console.log('alguien se está conectado...');
 
-const MensajeSchema = mongoose.Schema({
-  autor: {
-      id: String,
-      nombre: String,
-      apellido: String,
-      edad: Number,
-      alias: String,
-      avatar: String
-  },
-  texto: {type: String, require: true, minLength: 1, maxLength: 25},
-  fecha: {type: String, require: true, minLength: 1},
-});
-const MensajeDB = mongoose.model('mensajes', MensajeSchema)
-
-mongoose.connect(URI, 
-    { 
-      serverSelectionTimeoutMS: 1000
-    }, 
-    (error) => {
-        if (error) {
-            throw  'Error al conectarse a la base de datos';
-        } else {
-          ProductoDB.find({})
-          .then((productosDB) => {
-            for (let producto of productosDB) {
-              productos.push(producto)
-            }
-            // console.log(productos)
-          })
-          MensajeDB.find({})
-          .then((mensajesDB) => {
-            for (let mensaje of mensajesDB) {
-                mensajes.push(mensaje)
-            }
-          })
-        }
-  });
-
-  const ProductoSchema = mongoose.Schema({
-    id: {type: Number, require: true},
-    title: {type: String, require: true, minLength: 1, maxLength: 50},
-    price: {type: String, require: true, minLength: 1, maxLength: 25},
-    thumbnail: {type: String, require: true, minLength: 1},
-  });
-  const ProductoDB = mongoose.model('productos', ProductoSchema)
-
-  const UserSchema = mongoose.Schema({
-    id: {type: Number, require: true},
-    username: {type: String, require: false, minLength: 1, maxLength: 20},
-    password: {type: String, require: false, minLength: 1},
-    name: {type: String, require: false, minLength: 1},
-    avatar: {type: String, require: false, minLength: 1},
-  });
-  const User = mongoose.model('usuarios', UserSchema)
-
-/*  const UsuarioSchema = mongoose.Schema({
-    usuario: {type: String, require: true, minLength: 1, maxLength: 20},
-    email: {type: String, require: true, minLength: 1},
-    photo: {type: String, require: true},
-  });
-  const User = mongoose.model('usuarios', UsuarioSchema)*/
-
-  const infoAndWarnFilter = winston.format((info, opts) => { 
-    return info.level === 'info' || info.level === 'warn' ? info : false
+  const productos = await routes_controller.getProductos()
+  let mensajes = await MensajeDB.find({}).then((mensajes) => {
+    return mensajes
   })
-  const logger = winston.createLogger({
-    level: 'error',
-    transports: [
-      new winston.transports.Console({level:'verbose'}),
-      new winston.transports.File({filename:'error.log', level: 'error'}),
-      new winston.transports.File({filename:'warn.log', level: 'warn', format: winston.format.combine(
-        infoAndWarnFilter(),
-        winston.format.timestamp(),
-        winston.format.printf(i => {
-          return `${i.level.toUpperCase()}: ${i.timestamp} ${i.message}`;
-        })
-      )}),
-    ]
+
+  const chat= {
+    id: 123,
+    mensajes: mensajes
+  };
+
+  io.sockets.emit('listar', productos);
+
+  socket.on('notificacion', (title, price, thumbnail) => {
+    const producto = {
+      title: title,
+      price: price,
+      thumbnail: thumbnail,
+    };
+    producto.push(productos);
+    console.log(producto)
+
+    io.sockets.emit('listar', productos)
   })
-  
-  logger.log('silly', "127.0.0.1 - log silly")
-  logger.log('debug', "127.0.0.1 - log debug")
-  logger.log('verbose', "127.0.0.1 - log verbose")
-  logger.log('info', "127.0.0.1 - log info")
-  logger.log('warn', "127.0.0.1 - log warn")
-  logger.log('error', "127.0.0.1 - log error")
-  
-  logger.info("127.0.0.1 - log info 2")
-  logger.warn("127.0.0.1 - log warn 2")
-  logger.error("127.0.0.1 - log error 2")
 
-router.get('/', (req,res)=>{
-  const objRes = 
-  {msg: "Sitio principal de productos"};
-  res.json(objRes);
-});
+  console.log('normalizr:')
+  console.log(mensajes)
 
-router.get("/productos/listar", (req, res) => {
-    if (productos.length = 0) {
-        return res.status(404).json({ error: "no hay productos cargados" });
-      }
-    ProductoDB.find({})
-    .then((productosDB) => {
-      for (let producto of productosDB) {
-        productos.push(producto)
-      }
-      logger.info(productos)
-      res.json(productos);
-    })
-});
-  
-router.get("/productos/listar/:id", (req, res) => {
-    const { id } = req.params;
-    const producto = productos.find((producto) => producto.id == id);
-    if (!producto) {
-        return res.status(404).json({ error: "producto no encontrado" });
-      }
-    res.json(producto);
-});
-  
-router.put("/productos/actualizar/:id", (req, res) => {
-  const { id } = req.params;
-  let { title, price, thumbnail } = req.body;
-  let producto = productos.find((producto) => producto.id == id);
-  if (!producto) {
-    return res.status(404).json({ msg: "Usuario no encontrado" });
-  }
-  (producto.title = title), (producto.price = price), (producto.thumbnail = thumbnail);
-ProductoDB.updateOne({ "_id": id}, {'title': title, 'price': price, 'thumbnail':thumbnail})
-.then(productos=>{
-    logger.info('Producto acutalizado')
-    res.status(200).json(producto);
-})
-});
+  const mensajeSchema = new schema.Entity('mensajes');
 
-router.delete("/productos/borrar/:id", (req, res) => {
-  const { id } = req.params;
-  const producto = productos.find((producto) => producto.id == id);
+  const chatSchema = new schema.Entity('chat', {
+    mensajes: [mensajeSchema]
+  });
 
-  if (!producto) {
-    return res.status(404).json({ msg: "Usuario no encontrado" });
-  }
+  const normalizedChat = normalize(chat, chatSchema);
 
-  const index = productos.findIndex((producto) => producto.id == id);
-  productos.splice(index, 1);
-      ProductoDB.deleteOne({id: id})
-      .then(()=>{
-        logger.info('producto borrado')
-        })
-    res.status(200).end();
-});
+  // print(normalizedChat);
+  console.log('Longitud antes de normalizar:', JSON.stringify(chat).length);
+  console.log('Longitud después de normalizar:', JSON.stringify(normalizedChat).length);
+  io.sockets.emit('mensajes', mensajes, JSON.stringify(chat).length, JSON.stringify(normalizedChat).length);
 
-app.engine(
-    "hbs",
-    handlebars({
-        extname: ".hbs",
-        defaultLayout: "index.hbs",
-        layoutsDir: __dirname + "/views/layouts",
-        partialsDir: __dirname + "/views/partials"
-    })
-);
+  socket.on('nuevo', (data) => {
+    MensajeDB.insertMany([data])
+      .then((id_insertado) => {
+        mensajes['id'] = id_insertado[0];
+        mensajes.push(data);
+        console.log('Longitud antes de normalizar:', JSON.stringify(chat).length);
+        console.log('Longitud después de normalizar:', JSON.stringify(normalizedChat).length);
+        io.sockets.emit('mensajes', mensajes, JSON.stringify(chat).length, JSON.stringify(normalizedChat).length);
+        console.log(`Mensajes grabados...`);
 
-app.set('views', './views'); // especifica el directorio de vistas
-app.set('view engine', 'hbs'); // registra el motor de plantillas
-
-app.get('/productos/vista', function(req, res) {
-  logger.info(productos)
-  let tieneDatos;
-  if(productos.length > 0){
-    tieneDatos = true
-  }else{
-    tieneDatos = false
-  }
-  res.render('main', { productos: productos, listExists: tieneDatos });
-});
-
-io.on('connection', (socket) => {
-  logger.info('alguien se está conectado...');
-    
-    io.sockets.emit('listar', productos);
-    
-    socket.on('notificacion', (titulo, precio, imagen) => {
-      const producto = {
-        title: titulo,
-        price: precio,
-        thumbnail: imagen,
-      };
-
-      logger.info(producto)
-
-      ProductoDB.create(producto,(error, productoDB)=>{
-        if (error) {
-            throw "Error al grabar productos " + error;
-        } else {
-          productos.push(productoDB);
-          io.sockets.emit('listar', productos)
-        }
-      });
-    })
-    
-    logger.info('normalizr:')
-    logger.info(mensajes)
-
-    const mensajeSchema = new schema.Entity('mensajes');
-
-    const chatSchema = new schema.Entity('chat',{
-        mensajes: [mensajeSchema]
-    });
-    
-    const normalizedChat = normalize(chat, chatSchema);
-    
-    // print(normalizedChat);
-    logger.info('Longitud antes de normalizar:', JSON.stringify(chat).length);
-    logger.info('Longitud después de normalizar:', JSON.stringify(normalizedChat).length);
-    io.sockets.emit('mensajes', mensajes, JSON.stringify(chat).length, JSON.stringify(normalizedChat).length);
-        
-    socket.on('nuevo', (mensaje)=>{
-      MensajeDB.insertMany(mensaje,(error)=>{
-        if (error) {
-            throw "Error al grabar mensajes " + error;
-        } else {
-          mensajes.push(mensaje);
-
-          logger.info('Longitud antes de normalizar:', JSON.stringify(chat).length);
-          logger.info('Longitud después de normalizar:', JSON.stringify(normalizedChat).length);
-          io.sockets.emit('mensajes', mensajes, JSON.stringify(chat).length, JSON.stringify(normalizedChat).length);
-          logger.info(`Mensajes grabados...`);
-        }
       });
   })
+
 });
 
-//FAKER
-app.get('/productos/vista-test', (req,res)=>{
-  let productos = [];
-  let cant = req.query.cant || 10;
-  if (cant == 0) {
-    return res.status(404).json({ error: "no hay productos cargados" });
-  }
-  for (let i=0; i<cant; i++) {
-      let producto = generador.get();
-      producto.id = i + 1;
-      productos.push(producto);
-  }
- 
-  res.send(productos);
+//passport
+//LOGIN (COOKIE)
+
+
+app.get('/logout', (req,res)=>{
+  const username = req.cookies.username
+  res.clearCookie('username');
+  res.render('logout', { username: username });
+  req.session.destroy(err=>{
+    if (err){
+        res.json({status: 'Logout error', body: err});
+    } else {
+        res.send('Logout ok!');
+    }
+  });
 });
 
-app.post('/doInicio', (req,res)=>{
+app.post('/doLogin', (req,res)=>{
   const username = req.body.usuario
-  logger.info(req.body);
-  logger.info(req.params);
-  logger.info(req.query);
+  console.log(req.body);
+  console.log(req.params);
+  console.log(req.query);
   res.cookie('username', username,  { signed: false, maxAge: 5000 } );
   res.redirect('/');
 });
 
-//login
-app.get('/inicio', (req,res)=>{
-  res.render('inicio');
-});
-app.get('/salir', (req,res)=>{
-  const username = req.cookies.username
-  res.clearCookie('username');
-  res.render('salir', { username: username });
+
+//ARREGLAR EL logout**
+//PASSPORT
+app.get('/test', (req,res)=>{
+  res.send('Server levantado...');
 });
 
-//session
-app.get('/con-session', (req,res)=>{
-  if (req.session.contador) {
-      req.session.contador++;
-      res.send(`Ud. ha visitado el sitio ${req.session.contador} veces`);
+app.get('/login', rutas.getLogin);
+app.post('/login', passport.authenticate('login', {failureRedirect: '/faillogin'}), rutas.postLogin);
+app.get('/faillogin', rutas.getFailLogin);
+
+app.get('/signup', rutas.getSignUp);
+app.post('/signup', passport.authenticate('signup', {failureRedirect: '/failsignup'}), rutas.postSignUp);
+app.get('/failsignup', rutas.getFailSignUp);
+
+app.get('/logout', rutas.getLogout);
+
+app.get('/ruta-protegida', checkAuthentication, rutas.getRutaProtegida);
+
+app.get('/datos', rutas.getDatos);
+
+app.get('*', rutas.failRoute);
+
+function checkAuthentication(req, res, next){
+  if (req.isAuthenticated()){
+      next();
   } else {
-      req.session.contador = 1;
-      res.send('Bienvenido!');
+      res.redirect('/');
   }
-});
-
-app.get('/logout-session', (req,res)=>{
-  req.session.destroy(err=>{
-      if (err){
-          res.json({status: 'Logout error', body: err});
-      } else {
-          res.send('Logout ok!');
-      }
-  });
-});
-
-//passport
+}
 
 passport.use('login', new LocalStrategy({
   passReqToCallback: true
@@ -391,14 +215,14 @@ passport.use('login', new LocalStrategy({
         if (err)
           return done(err);
         if (!user){
-          logger.error('user not found ' +username);
+          console.log('user not found ' +username);
           return done(null, false,
-            logger.error('message', 'user not found'));
+            console.log('message', 'user not found'));
           }
         if(!isValidPassword(user, password)){
-          logger.error('Invalid password');
+          console.log('Invalid password');
           return done (null, false,
-            logger.error('mensage', 'Invalid Password'));
+            console.log('mensage', 'Invalid Password'));
           }
         return done (null, user);
       }
@@ -417,26 +241,26 @@ passport.use('signup', new LocalStrategy({
     findOrCreateUser = function(){
       User.findOne({'username' : username}, function(err, user) {
         if (err){
-          logger.error('Error en SignUp: ' +err);
+          console.log('Error en SignUp: ' +err);
           return done(err);
         }
         if (user) {
-          logger.warn('User already exists');
+          console.log('User already exists');
           return done (null, false,
-            logger.warn('message', 'User Already Exists'));
+            console.log('message', 'User Already Exists'));
         } else {
           var newUser = new User();
           newUser.username = username;
           newUser.password = createHash(password);
-          newUser.email = req.body.email;
           newUser.firstName = req.body.firstName;
           newUser.lastName = req.body.lastName;
+          newUser.age = req.body.age;
           newUser.save(function(err){
             if (err){
-              logger.error('Error in Saving user: '+err);
+              console.log('Error in Saving user: '+err);
               throw err;
             }
-            logger.info('User Registration succesful');
+            console.log('User Registration succesful');
             return done(null, newUser);
           });
         }
@@ -450,205 +274,12 @@ var createHash = function(password){
 }
   
 
-/*passport.serializeUser(function(user, done) {
+passport.serializeUser(function(user, done) {
   done(null, user._id);
-});*/
+});
   
-/*passport.deserializeUser(function(id, done) {
+passport.deserializeUser(function(id, done) {
   User.findById(id, function(err, user){
     done(err, user);
   });
-});*/
-  
-
-app.get('/test', (req,res)=>{
-    res.send('Server levantado...');
 });
-
-app.get('/login', routes.getLogin);
-app.post('/login', passport.authenticate('login', {failureRedirect: '/faillogin'}), routes.postLogin);
-app.get('/faillogin', routes.getFailLogin);
-
-app.get('/signup', routes.getSignUp);
-app.post('/signup', passport.authenticate('signup', {failureRedirect: '/failsignup'}), routes.postSignUp);
-app.get('/failsignup', routes.getFailSignUp);
-
-app.get('/logout', routes.getLogout);
-
-app.get('/ruta-protegida', checkAuthentication, routes.getRutaProtegida);
-
-app.get('/datos', routes.getDatos);
-
-
-function checkAuthentication(req, res, next){
-    if (req.isAuthenticated()){
-        next();
-    } else {
-        res.redirect('/');
-    }
-}
-
-//facebook
-
-passport.use(new FacebookStrategy({
-  clientID: variablesFacebook.clientID,
-  clientSecret: variablesFacebook.clientSecret,
-  callbackURL: `https://localhost:${PORT}/auth/facebook/data`,
-  profileFields: ['id', 'displayName', 'picture.type(large)', 'email', 'birthday', 'friends', 'first_name', 'last_name', 'middle_name', 'gender', 'link']
-},
-function(accessToken, refreshToken, profile, cb) {
-    let indice = usuarios.findIndex(e=>e.id == profile.id);
-    if (indice == -1) {
-      let newUser = User.findOne({ 'id' : profile.id },
-        function (err, user){
-          if (err)
-            return done(err);
-          if (!user){
-            let newUser = new User();
-            newUser.id = profile.id;
-            newUser.name = profile.displayName;
-            newUser.avatar = profile.photos[0].value;
-            newUser.save(function(err){
-              if (err){
-                logger.error('Error in Saving user: '+err);
-                throw err;
-              }
-              logger.info('User Registration succesful');
-            });
-            usuarios.push(newUser);
-            user = newUser
-          }
-          return cb(null, user);
-        }
-      );
-      // console.log('prueba')
-       logger.info(newUser)
-      // return cb(null, newUser);
-    } else {
-      logger.info('encontré', usuarios[indice]);
-        return cb(null, usuarios[indice])
-    }
-}
-)
-);
-
-logger.info(variablesFacebook)
-process.argv.forEach((val, index) => {
-  if(index == 2){//PORT
-    logger.info(`PORT: ${val}`)
-    PORT = val
-  }
-  if(index == 3){//FACEBOOK_CLIENT_ID
-    logger.info(`FACEBOOK_CLIENT_ID: ${val}`)
-    variablesFacebook.clientID = val
-  }
-  if(index == 4){//FACEBOOK_CLIENT_SECRET
-    logger.info(`FACEBOOK_CLIENT_SECRET: ${val}`)
-    variablesFacebook.clientSecret = val
-  }
-  if(index == 5){//FORK_O_CLUSTER
-    logger.info(`FORK_O_CLUSTER: ${val}`)
-    FORK_O_CLUSTER = val
-  }
-})
-logger.info(variablesFacebook)
-
-
-let server;
-
-const numCPUs = require('os').cpus().length
-if(FORK_O_CLUSTER == 'FORK'){
-  //server = https.createServer(httpsOptions, app).listen(PORT, () => { console.log('Server corriendo en ' + PORT) })
-  server = http.listen(PORT, () => logger.info(`escuchando en puerto ${PORT}`));
-}else{
-  if(cluster.isMaster){
-    logger.info(`master ${process.pid} running`)
-    for(let i = 0; i < numCPUs; i++){
-      cluster.fork()
-    }
-  
-    cluster.on('exit', (worker, code, signal) => {
-      logger.info(`worker ${worker.process.pid} died`)
-    })
-  }else{
-    logger.info(`worker ${process.pid} started`)
-  
-    //server = https.createServer(httpsOptions, app).listen(PORT, () => { console.log('Server corriendo en ' + PORT) })
-    server = http.listen(PORT, () => logger.info(`escuchando en puerto ${PORT}`));
-  }
-}
-
-passport.serializeUser((user, done)=>{
-  done(null, user.id);
-});
-
-passport.deserializeUser(function(id, done) {
-  logger.info('deserializeUser')
-  logger.info(id)
-  let usuario = usuarios[usuarios.findIndex(e=>e.id == id)];
-  logger.info(usuario)
-  if(usuario){
-    done(null, usuario);
-  }else{
-    User.findById(id, function(err, user){
-      done(err, user);
-    });
-  }
-});
-
-
-app.get('/auth/facebook',
-passport.authenticate('facebook'));
-
-app.get('/auth/facebook/data', passport.authenticate('facebook', { failureRedirect: '/error-login.html' }),
-  function(req, res) {
-    // Successful authentication, redirect home.
-    logger.info('facebook data')
-    logger.info(req.user)
-    res.cookie('username', req.user.name,  { signed: false, maxAge: 5000 } );
-    res.cookie('avatar', req.user.avatar,  { signed: false, maxAge: 5000 } );
-    res.redirect('/index.html');
-  }
-);
-
-app.get('/data', (req,res) => {
-  if (req.isAuthenticated()) {
-      let user = req.user;
-      res.json({user});
-  } else {
-      res.redirect('/index.html');
-  }
-});
-
-app.get('/randoms', (req,res) => {
-  const cant = req.query.cant ? req.query.cant : 100000000
-  logger.info(`cantidad: ${cant}`)
-  const computo = fork('./random.js');
-  computo.send(cant);
-  computo.on('message', valores => res.end(mostrarValores(valores)));
-});
-
-const mostrarValores = (valores) => {
-  let resultado = ''
-  for (const valor of Object.entries(valores)) {
-    resultado += valor[0] + ': ' + valor[1] + '\n'
-  }
-  return resultado
-}
-
-app.get('/comprobar', (req,res) => {
-  res.json('no se bloquea');
-});
-
-app.get('/info', (req,res) => {
-  const argumentos = []
-  process.argv.forEach((val, index) => {
-    if(index > 1){
-      argumentos.push(val)
-    }
-  })
-  res.json(`argumentos de entrada: ${argumentos} - S.O.: ${process.platform} - Version Node ${process.version} - Uso memoria: ${process.memoryUsage()} - Path: ${process.cwd()} - Process ${process.pid} - Carpeta ${process.cwd()} - Procesadores ${numCPUs}` )
-  
-});
-
-app.get('*', routes.failRoute);

@@ -7,15 +7,29 @@
     <title>Registrar Usuario</title>
 </head>
 <body>
-    <div>
+    <style>
+        body {
+          background-color: rgba(43, 194, 221, 0.753);
+          margin: 10px;
+        }
+    </style>
+    <div style="width: 400px;
+    background: #24303c;
+    padding: 30px;
+    margin: auto;
+    margin-top: 100px;
+    border-radius: 4px;
+    font-family: 'calibri';
+    color: white;
+    box-shadow: 7px 13px 37px #000;">
         <h1>Registrar Usuario</h1>
         <form action="/signup" method="post">
-            <label for="username">Usuario:</label>
-            <input type="text" id="username" name="username"><br><br>
+            <label for="username">Email:</label>
+            <input type="email" id="username" name="username"><br><br>
             <label for="password">Password:</label>
             <input type="password" id="password" name="password"><br><br>
-            <label for="direccion">Dirección:</label>
-            <input type="text" id="direccion" name="direccion"><br><br>
+            <label for="age">Edad:</label>
+            <input type="text" id="age" name="age"><br><br>
             <input type="submit" value="Registrar">
         </form>  
     </div>    
